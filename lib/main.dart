@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'services/permission_service.dart';
 import 'services/sms_service.dart';
 import 'services/scam_processor_service.dart';
+import 'services/notification_service.dart';
 import 'models/sms_message.dart';
+import 'pages/settings_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -78,6 +81,7 @@ class _HomePageState extends State<HomePage>
   void dispose() {
     _tabController.dispose();
     _refreshDebounceTimer?.cancel();
+    NotificationService.instance.stopPeriodicCheck();
     ScamProcessorService.instance.stopProcessing();
     super.dispose();
   }
@@ -105,6 +109,17 @@ class _HomePageState extends State<HomePage>
     _listenerStarted = true;
 
     // Initialize scam processor (loads AI model)
+    setState(() {
+      _statusMessage = 'Initializing notifications...';
+    });
+
+    // Initialize notification service first
+    await NotificationService.instance.initialize();
+
+    // Debug: Check notification permission status
+    final notifStatus = await Permission.notification.status;
+    debugPrint('NOTIFICATION PERMISSION STATUS: $notifStatus');
+
     setState(() {
       _statusMessage = 'Loading AI model...';
     });
@@ -168,6 +183,10 @@ class _HomePageState extends State<HomePage>
         });
       }
     }
+
+    // Start periodic scam alert check AFTER processing has started
+    // so the first immediate check can find scored SMS
+    NotificationService.instance.startPeriodicCheck();
 
     setState(() {
       _statusMessage = _aiInitialized
@@ -294,11 +313,11 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  /// Debounced refresh - ensures UI updates at most every 1 second
+  /// Debounced refresh - ensures UI updates at most every 0.5 second
   void _debouncedRefreshData() {
     _refreshDebounceTimer?.cancel();
     _refreshDebounceTimer = Timer(
-      const Duration(milliseconds: 1000),
+      const Duration(milliseconds: 500),
       _refreshData,
     );
   }
@@ -430,6 +449,15 @@ class _HomePageState extends State<HomePage>
               ),
             ),
           ),
+        IconButton(
+          icon: const Icon(Icons.settings, color: Colors.white70),
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const SettingsPage()),
+            );
+          },
+        ),
       ],
     );
   }
@@ -1074,6 +1102,7 @@ class _HomePageState extends State<HomePage>
           body: sms.body,
           date: sms.date,
           threatScore: sms.threatScore,
+          decision: sms.decision,
           kind: 'unread',
         );
       },
@@ -1144,6 +1173,7 @@ class _HomePageState extends State<HomePage>
     required String body,
     required int date,
     double? threatScore,
+    String? decision,
     required String kind,
   }) {
     final dateTime = DateTime.fromMillisecondsSinceEpoch(date);
@@ -1200,11 +1230,14 @@ class _HomePageState extends State<HomePage>
       hasWarning = true;
     }
 
+    // Use colored bg for active warnings, neutral bg for dismissed/reported
+    final bool isActedOn = decision == 'dismissed' || decision == 'reported';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: hasWarning
+        color: (hasWarning && !isActedOn)
             ? statusBorderColor.withValues(alpha: 0.15)
             : const Color(0xFF252525),
         borderRadius: BorderRadius.circular(12),
@@ -1270,6 +1303,48 @@ class _HomePageState extends State<HomePage>
                   ],
                 ),
               ),
+              // Decision tag (Dismissed/Reported)
+              if (decision == 'dismissed' || decision == 'reported')
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: decision == 'reported'
+                          ? const Color(0xFFF44336).withValues(alpha: 0.2)
+                          : const Color(0xFF9E9E9E).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          decision == 'reported'
+                              ? Icons.flag
+                              : Icons.do_not_disturb_on,
+                          size: 12,
+                          color: decision == 'reported'
+                              ? const Color(0xFFF44336)
+                              : const Color(0xFF9E9E9E),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          decision!.toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 9,
+                            color: decision == 'reported'
+                                ? const Color(0xFFF44336)
+                                : const Color(0xFF9E9E9E),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 8),

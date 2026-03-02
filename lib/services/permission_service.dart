@@ -6,6 +6,7 @@ class PermissionService {
     Permission.sms,
     Permission.phone,
     Permission.contacts,
+    Permission.notification,
   ];
 
   /// Check if all required permissions are granted

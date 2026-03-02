@@ -156,6 +156,11 @@ class SmsService {
     final date = message.date ?? now;
     final serviceCenter = message.serviceCenterAddress;
 
+    // Ensure contacts are loaded for name lookup
+    if (!_contactsService.isLoaded) {
+      await _contactsService.loadContacts();
+    }
+
     // Lookup contact name
     final contactName = _contactsService.getContactName(address);
     debugPrint('>>> CONTACT NAME: $contactName');

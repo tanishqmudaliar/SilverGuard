@@ -2,6 +2,7 @@
     
     <!-- SMS Permissions -->
     <uses-permission android:name="android.permission.READ_SMS"/>
+    <uses-permission android:name="android.permission.SEND_SMS"/>
     <uses-permission android:name="android.permission.RECEIVE_SMS"/>
     
     <!-- Phone Permissions (required by another_telephony) -->
@@ -9,6 +10,9 @@
     
     <!-- Contacts Permission (for contact name lookup) -->
     <uses-permission android:name="android.permission.READ_CONTACTS"/>
+    
+    <!-- Notification Permission (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     
     <application
         android:label="silverguard"

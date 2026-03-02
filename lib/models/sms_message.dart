@@ -60,6 +60,7 @@ class UnreadSms {
   final int createdAt;
   final int updatedAt;
   final double? threatScore; // null = not classified, 0.0-1.0 = threat level
+  final String? decision; // null = pending, 'safe', 'dismissed', 'reported'
 
   UnreadSms({
     this.id,
@@ -71,6 +72,7 @@ class UnreadSms {
     required this.createdAt,
     required this.updatedAt,
     this.threatScore,
+    this.decision,
   });
 
   /// Display name: contact name if available, otherwise address
@@ -87,6 +89,7 @@ class UnreadSms {
       'created_at': createdAt,
       'updated_at': updatedAt,
       'threat_score': threatScore,
+      'decision': decision,
     };
   }
 
@@ -101,6 +104,7 @@ class UnreadSms {
       createdAt: map['created_at'] as int,
       updatedAt: map['updated_at'] as int,
       threatScore: map['threat_score'] as double?,
+      decision: map['decision'] as String?,
     );
   }
 }

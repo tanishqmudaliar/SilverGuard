@@ -72,6 +72,8 @@ class ContactsService {
   /// This handles ISD codes, leading zeros, etc.
   List<String> _generatePhoneVariants(String phone) {
     // Remove all non-digit characters except leading +
+    // Also strip Unicode whitespace and zero-width characters
+    phone = phone.replaceAll(RegExp(r'[\s\u00A0\u200B-\u200D\uFEFF]'), '');
     final hasPlus = phone.startsWith('+');
     final digitsOnly = phone.replaceAll(RegExp(r'[^\d]'), '');
 

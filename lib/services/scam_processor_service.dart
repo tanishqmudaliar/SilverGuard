@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/sms_message.dart';
 import 'database_helper.dart';
 import 'scam_detector_service.dart';
+import 'notification_service.dart';
 
 /// Priority levels for processing queue
 enum ProcessingPriority {
@@ -39,6 +40,7 @@ class ScamProcessorService {
 
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
   final ScamDetectorService _detector = ScamDetectorService.instance;
+  final NotificationService _notificationService = NotificationService.instance;
 
   final List<_ProcessingItem> _stack = [];
   bool _isRunning = false;
@@ -182,6 +184,25 @@ class ScamProcessorService {
           await _dbHelper.updateUnreadThreatScore(item.id, result.threatScore);
         } else {
           await _dbHelper.updateReadThreatScore(item.id, result.threatScore);
+        }
+
+        // Set decision based on threat score (unread only)
+        if (result.threatScore < 0.50) {
+          // Safe — auto-mark as safe (only for unread)
+          if (item.table == 'unread') {
+            await _dbHelper.updateUnreadDecision(item.id, 'safe');
+          }
+        } else if (item.table == 'unread') {
+          // Suspicious/Scam unread SMS — send immediate notification
+          if (_notificationService.isInitialized) {
+            await _notificationService.showScamAlert(
+              id: item.id,
+              table: 'unread',
+              address: item.address,
+              body: item.body,
+              threatScore: result.threatScore,
+            );
+          }
         }
 
         debugPrint(

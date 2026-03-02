@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/sms_message.dart';
+import '../models/guardian.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
@@ -18,7 +19,12 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return await openDatabase(
+      path,
+      version: 3,
+      onCreate: _createDB,
+      onUpgrade: _upgradeDB,
+    );
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -49,6 +55,7 @@ class DatabaseHelper {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         threat_score REAL,
+        decision TEXT,
         UNIQUE(address, date, body)
       )
     ''');
@@ -84,6 +91,16 @@ class DatabaseHelper {
       )
     ''');
 
+    // Guardians table - trusted contacts to alert about scams
+    await db.execute('''
+      CREATE TABLE guardians (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+
     // Create indexes for faster queries
     await db.execute('CREATE INDEX idx_sms_address ON sms(address)');
     await db.execute('CREATE INDEX idx_sms_date ON sms(date)');
@@ -93,6 +110,23 @@ class DatabaseHelper {
     await db.execute('CREATE INDEX idx_read_date ON read(date)');
     await db.execute('CREATE INDEX idx_sent_address ON sent(address)');
     await db.execute('CREATE INDEX idx_sent_date ON sent(date)');
+  }
+
+  /// Handle database upgrades
+  Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE guardians (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          phone TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL
+        )
+      ''');
+    }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE unread ADD COLUMN decision TEXT');
+    }
   }
 
   // ==================== SMS TABLE OPERATIONS ====================
@@ -204,6 +238,19 @@ class DatabaseHelper {
     return result.map((map) => UnreadSms.fromMap(map)).toList();
   }
 
+  /// Get unread SMS with pending decision (decision IS NULL and threat_score >= 0.50)
+  /// Used by NotificationService for periodic scam alerts
+  Future<List<UnreadSms>> getPendingUnreadAlerts() async {
+    final db = await database;
+    final result = await db.query(
+      'unread',
+      where:
+          'decision IS NULL AND threat_score IS NOT NULL AND threat_score >= 0.50',
+      orderBy: 'date DESC',
+    );
+    return result.map((map) => UnreadSms.fromMap(map)).toList();
+  }
+
   // ==================== READ TABLE OPERATIONS ====================
 
   /// Insert into read table (duplicates ignored)
@@ -269,6 +316,22 @@ class DatabaseHelper {
       orderBy: 'date ASC', // Oldest first so newest ends up on top of stack
     );
     return result.map((map) => ReadSms.fromMap(map)).toList();
+  }
+
+  // ==================== DECISION OPERATIONS ====================
+
+  /// Update decision in unread table
+  Future<int> updateUnreadDecision(int id, String decision) async {
+    final db = await database;
+    return await db.update(
+      'unread',
+      {
+        'decision': decision,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   // ==================== SENT TABLE OPERATIONS ====================
@@ -386,6 +449,49 @@ class DatabaseHelper {
       'scam':
           (scamUnread.first['count'] as int) + (scamRead.first['count'] as int),
     };
+  }
+
+  // ==================== GUARDIANS TABLE OPERATIONS ====================
+
+  /// Insert a guardian contact
+  Future<int> insertGuardian(Guardian guardian) async {
+    final db = await database;
+    return await db.insert(
+      'guardians',
+      guardian.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  /// Get all guardian contacts
+  Future<List<Guardian>> getAllGuardians() async {
+    final db = await database;
+    final result = await db.query('guardians', orderBy: 'created_at DESC');
+    return result.map((map) => Guardian.fromMap(map)).toList();
+  }
+
+  /// Delete a guardian contact by ID
+  Future<int> deleteGuardian(int id) async {
+    final db = await database;
+    return await db.delete('guardians', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Get guardian count
+  Future<int> getGuardianCount() async {
+    final db = await database;
+    final result = await db.rawQuery('SELECT COUNT(*) as count FROM guardians');
+    return result.first['count'] as int;
+  }
+
+  /// Check if a phone number already exists in guardians
+  Future<bool> isGuardianExists(String phone) async {
+    final db = await database;
+    final result = await db.query(
+      'guardians',
+      where: 'phone = ?',
+      whereArgs: [phone],
+    );
+    return result.isNotEmpty;
   }
 
   /// Close database
