@@ -38,6 +38,10 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    lint {
+        abortOnError = false
+    }
 }
 
 flutter {

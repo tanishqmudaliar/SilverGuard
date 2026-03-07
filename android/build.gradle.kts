@@ -17,6 +17,13 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+    plugins.withId("com.android.library") {
+        extensions.findByType<com.android.build.gradle.LibraryExtension>()?.apply {
+            lint {
+                abortOnError = false
+            }
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {

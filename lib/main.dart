@@ -69,6 +69,11 @@ class _HomePageState extends State<HomePage>
 
   late TabController _tabController;
   Timer? _refreshDebounceTimer;
+  bool _refreshScheduled = false;
+  DateTime? _lastRefreshTime;
+  final ScrollController _unreadScrollController = ScrollController();
+  final ScrollController _readScrollController = ScrollController();
+  final ScrollController _sentScrollController = ScrollController();
 
   @override
   void initState() {
@@ -80,7 +85,11 @@ class _HomePageState extends State<HomePage>
   @override
   void dispose() {
     _tabController.dispose();
+    _unreadScrollController.dispose();
+    _readScrollController.dispose();
+    _sentScrollController.dispose();
     _refreshDebounceTimer?.cancel();
+    _refreshScheduled = false;
     NotificationService.instance.stopPeriodicCheck();
     ScamProcessorService.instance.stopProcessing();
     super.dispose();
@@ -190,7 +199,7 @@ class _HomePageState extends State<HomePage>
 
     setState(() {
       _statusMessage = _aiInitialized
-          ? 'SMS listener active. AI protection enabled.'
+          ? 'Real-time monitoring is active'
           : 'SMS listener active. AI failed to load.';
     });
 
@@ -313,13 +322,31 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  /// Debounced refresh - ensures UI updates at most every 0.5 second
+  /// Throttled refresh - fires immediately on first call, then batches
+  /// subsequent calls with a 2-second cooldown to avoid excessive DB queries.
   void _debouncedRefreshData() {
-    _refreshDebounceTimer?.cancel();
-    _refreshDebounceTimer = Timer(
-      const Duration(milliseconds: 500),
-      _refreshData,
-    );
+    final now = DateTime.now();
+    const cooldown = Duration(seconds: 2);
+
+    // If enough time has passed since the last refresh, fire immediately
+    if (_lastRefreshTime == null ||
+        now.difference(_lastRefreshTime!) >= cooldown) {
+      _lastRefreshTime = now;
+      _refreshData();
+      return;
+    }
+
+    // Otherwise, schedule one trailing refresh at end of cooldown
+    if (!_refreshScheduled) {
+      _refreshScheduled = true;
+      final remaining = cooldown - now.difference(_lastRefreshTime!);
+      _refreshDebounceTimer?.cancel();
+      _refreshDebounceTimer = Timer(remaining, () {
+        _refreshScheduled = false;
+        _lastRefreshTime = DateTime.now();
+        _refreshData();
+      });
+    }
   }
 
   Future<void> _refreshData() async {
@@ -420,8 +447,8 @@ class _HomePageState extends State<HomePage>
               Text(
                 _aiInitialized
                     ? (_pendingScamChecks > 0
-                          ? 'Checking $_pendingScamChecks messages...'
-                          : 'AI Protection Active')
+                          ? 'Scanning in progress...'
+                          : '${(_stats['safe'] ?? 0) + (_stats['uncertain'] ?? 0) + (_stats['suspicious'] ?? 0) + (_stats['scam'] ?? 0)} messages scanned')
                     : (_listenerStarted
                           ? 'Loading AI model...'
                           : 'SMS Protection Inactive'),
@@ -582,7 +609,7 @@ class _HomePageState extends State<HomePage>
               Text(
                 _aiInitialized
                     ? (_pendingScamChecks > 0
-                          ? 'AI Checking $_pendingScamChecks messages...'
+                          ? '$_pendingScamChecks messages in queue'
                           : 'AI Protection Active')
                     : 'AI Not Loaded',
                 style: TextStyle(
@@ -806,25 +833,27 @@ class _HomePageState extends State<HomePage>
             children: [
               Expanded(
                 child: _buildStatBadge(
-                  'Unread',
-                  '${_stats['unread']}',
+                  'Received',
+                  '${_stats['unread']! + _stats['read']!}',
                   const Color(0xFF00D4FF),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: _buildStatBadge(
-                  'Read',
-                  '${_stats['read']}',
+                  'Analyzed',
+                  '$checked',
                   const Color(0xFF4CAF50),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: _buildStatBadge(
-                  'Sent',
-                  '${_stats['sent']}',
-                  const Color(0xFF888888),
+                  'Threats',
+                  '${_stats['suspicious']! + _stats['scam']!}',
+                  (_stats['suspicious']! + _stats['scam']!) > 0
+                      ? const Color(0xFFF44336)
+                      : const Color(0xFF888888),
                 ),
               ),
             ],
@@ -1039,36 +1068,9 @@ class _HomePageState extends State<HomePage>
               indicatorColor: const Color(0xFF00D4FF),
               indicatorWeight: 2,
               tabs: [
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.mark_email_unread, size: 16),
-                      const SizedBox(width: 6),
-                      Text('${_unreadSms.length}'),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.mark_email_read, size: 16),
-                      const SizedBox(width: 6),
-                      Text('${_readSms.length}'),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.send, size: 16),
-                      const SizedBox(width: 6),
-                      Text('${_sentSms.length}'),
-                    ],
-                  ),
-                ),
+                const Tab(text: 'Unread'),
+                const Tab(text: 'Read'),
+                const Tab(text: 'Sent'),
               ],
             ),
           ),
@@ -1092,20 +1094,28 @@ class _HomePageState extends State<HomePage>
     if (_unreadSms.isEmpty) {
       return _buildEmptyState(Icons.mark_email_unread, 'No unread messages');
     }
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: _unreadSms.length,
-      itemBuilder: (context, index) {
-        final sms = _unreadSms[index];
-        return _buildSmsItem(
-          address: sms.displayName,
-          body: sms.body,
-          date: sms.date,
-          threatScore: sms.threatScore,
-          decision: sms.decision,
-          kind: 'unread',
-        );
-      },
+    return Scrollbar(
+      thumbVisibility: true,
+      thickness: 8,
+      radius: const Radius.circular(4),
+      interactive: true,
+      controller: _unreadScrollController,
+      child: ListView.builder(
+        controller: _unreadScrollController,
+        padding: const EdgeInsets.all(12),
+        itemCount: _unreadSms.length,
+        itemBuilder: (context, index) {
+          final sms = _unreadSms[index];
+          return _buildSmsItem(
+            address: sms.displayName,
+            body: sms.body,
+            date: sms.date,
+            threatScore: sms.threatScore,
+            decision: sms.decision,
+            kind: 'unread',
+          );
+        },
+      ),
     );
   }
 
@@ -1113,19 +1123,27 @@ class _HomePageState extends State<HomePage>
     if (_readSms.isEmpty) {
       return _buildEmptyState(Icons.mark_email_read, 'No read messages');
     }
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: _readSms.length,
-      itemBuilder: (context, index) {
-        final sms = _readSms[index];
-        return _buildSmsItem(
-          address: sms.displayName,
-          body: sms.body,
-          date: sms.date,
-          threatScore: sms.threatScore,
-          kind: 'read',
-        );
-      },
+    return Scrollbar(
+      thumbVisibility: true,
+      thickness: 8,
+      radius: const Radius.circular(4),
+      interactive: true,
+      controller: _readScrollController,
+      child: ListView.builder(
+        controller: _readScrollController,
+        padding: const EdgeInsets.all(12),
+        itemCount: _readSms.length,
+        itemBuilder: (context, index) {
+          final sms = _readSms[index];
+          return _buildSmsItem(
+            address: sms.displayName,
+            body: sms.body,
+            date: sms.date,
+            threatScore: sms.threatScore,
+            kind: 'read',
+          );
+        },
+      ),
     );
   }
 
@@ -1133,19 +1151,27 @@ class _HomePageState extends State<HomePage>
     if (_sentSms.isEmpty) {
       return _buildEmptyState(Icons.send, 'No sent messages');
     }
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: _sentSms.length,
-      itemBuilder: (context, index) {
-        final sms = _sentSms[index];
-        return _buildSmsItem(
-          address: sms.displayName,
-          body: sms.body,
-          date: sms.date,
-          threatScore: null, // Sent messages don't have threat score
-          kind: 'sent',
-        );
-      },
+    return Scrollbar(
+      thumbVisibility: true,
+      thickness: 8,
+      radius: const Radius.circular(4),
+      interactive: true,
+      controller: _sentScrollController,
+      child: ListView.builder(
+        controller: _sentScrollController,
+        padding: const EdgeInsets.all(12),
+        itemCount: _sentSms.length,
+        itemBuilder: (context, index) {
+          final sms = _sentSms[index];
+          return _buildSmsItem(
+            address: sms.displayName,
+            body: sms.body,
+            date: sms.date,
+            threatScore: null, // Sent messages don't have threat score
+            kind: 'sent',
+          );
+        },
+      ),
     );
   }
 
