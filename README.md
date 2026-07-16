@@ -34,6 +34,7 @@ An AI-powered Android SMS scam detection app that protects users — especially 
 - [Performance Optimizations](#performance-optimizations)
 - [Privacy & Security](#privacy--security)
 - [Build Configuration](#build-configuration)
+- [Configuration](#configuration)
 - [Known Limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
@@ -1426,6 +1427,17 @@ All files in `assets/ml/` are bundled into the APK. This includes the ONNX model
 
 ---
 
+## Configuration
+
+| Setting                         | Values                                                                      | Description                                                                                                                            |
+| ------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **Notification Check Interval** | 5, 10, 15, 30, 60 min (default: `30`)                                       | How often periodic re-checks run for pending scam alerts; persisted in `SharedPreferences` under `notification_check_interval_minutes` |
+| **Threat Score Thresholds**     | Safe `< 0.30`, Uncertain `0.30–0.49`, Suspicious `0.50–0.69`, Scam `≥ 0.70` | Determines badge color and whether a notification is triggered                                                                         |
+| **Application ID**              | `com.example.silverguard`                                                   | Set in `android/app/build.gradle.kts`; must be changed before Play Store publishing                                                    |
+| **Model Assets Path**           | `assets/ml/`                                                                | Location expected for `silver_guard.onnx`, `vocab.txt`, `model_config.json`                                                            |
+
+---
+
 ## Known Limitations
 
 | Limitation               | Description                                                                     |
@@ -1555,6 +1567,6 @@ This project is open source and available under the [MIT License](LICENSE).
 
 ---
 
-Made with ❤️ by Tanishq Mudaliar
+Made with ❤️ by [Tanishq Mudaliar](https://github.com/tanishqmudaliar)
 
 **Protecting seniors from SMS scams — one message at a time. 🛡️**
